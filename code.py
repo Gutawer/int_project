@@ -4,46 +4,7 @@ import torchvision.transforms as transforms
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import matplotlib.pyplot as plt
-import numpy as np
-
-transform = transforms.Compose(
-    [transforms.ToTensor(),
-     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-
-batch_size = 4
-
-trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
-                                        download=True, transform=transform)
-trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
-                                          shuffle=True, num_workers=2)
-
-testset = torchvision.datasets.CIFAR10(root='./data', train=False,
-                                       download=True, transform=transform)
-testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
-                                         shuffle=False, num_workers=2)
-
-classes = ('plane', 'car', 'bird', 'cat',
-           'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
-
-
-# functions to show an image
-
-def imshow(img):
-    img = img / 2 + 0.5     # unnormalize
-    npimg = img.numpy()
-    plt.imshow(np.transpose(npimg, (1, 2, 0)))
-    plt.show()
-
-
-# get some random training images
-dataiter = iter(trainloader)
-images, labels = dataiter.next()
-
-# show images
-imshow(torchvision.utils.make_grid(images))
-# print labels
-print(' '.join('%5s' % classes[labels[j]] for j in range(batch_size)))
+from tqdm import tqdm
 
 class Net(nn.Module):
     def __init__(self):
@@ -64,88 +25,85 @@ class Net(nn.Module):
         x = self.fc3(x)
         return x
 
+def get_cifar10():
+    train_transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        ]
+    )
+    train_dataset = torchvision.datasets.CIFAR10(
+        "./data/CIFAR10", train=True, transform=train_transform, download=True
+    )
 
-net = Net()
-if torch.cuda.is_available():
-    print("Using CUDA")
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-net.to(device)
+    test_transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        ]
+    )
+    test_dataset = torchvision.datasets.CIFAR10(
+        "./data/CIFAR10", train=False, transform=test_transform, download=True
+    )
 
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
+    return train_dataset, test_dataset
 
-for epoch in range(2):  # loop over the dataset multiple times
+def train_and_test(net, loader, optimiser):
+    net.train()
+
+    running_loss = []
+
+    for inputs, labels in tqdm(loader):
+        inputs = inputs.cuda()
+        labels = labels.cuda()
+
+        optimiser.zero_grad()
+
+        outputs = net(inputs)
+        loss = F.cross_entropy(outputs, labels)
+        loss.backward()
+        optimiser.step()
+
+        running_loss.append(loss.item())
+
+    avg_loss = sum(running_loss) / len(running_loss)
+    print("Training average loss: {}".format(avg_loss))
+
+    net.eval()
 
     running_loss = 0.0
-    for i, data in enumerate(trainloader, 0):
-        # get the inputs; data is a list of [inputs, labels]
-        inputs, labels = data[0].to(device), data[1].to(device)
+    running_correct = 0
 
-        # zero the parameter gradients
-        optimizer.zero_grad()
+    for inputs, labels in loader:
+        with torch.no_grad():
+            inputs = inputs.cuda()
+            labels = labels.cuda()
 
-        # forward + backward + optimize
-        outputs = net(inputs)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
+            outputs = net(inputs)
+            running_loss += F.cross_entropy(outputs, labels, reduction = "sum")
 
-        # print statistics
-        running_loss += loss.item()
-        if i % 2000 == 1999:    # print every 2000 mini-batches
-            print('[%d, %5d] loss: %.3f' %
-                  (epoch + 1, i + 1, running_loss / 2000))
-            running_loss = 0.0
+            outputs = outputs.max(1)[1]
+            running_correct += outputs.eq(labels.view_as(outputs)).sum().item()
 
-print('Finished Training')
+    avg_loss = running_loss / len(loader.dataset)
+    percent_correct = running_correct * 100.0 / len(loader.dataset)
+    print("Testing loss: {}, Accuracy: {}/10000 ({}%)".format(avg_loss, running_correct, percent_correct))
 
-PATH = './cifar_net.pth'
-torch.save(net.state_dict(), PATH)
+train_dataset, test_dataset = get_cifar10()
 
-dataiter = iter(testloader)
-images, labels = dataiter.next()
-
-# print images
-imshow(torchvision.utils.make_grid(images))
-print('GroundTruth: ', ' '.join('%5s' % classes[labels[j]] for j in range(4)))
+train_loader = torch.utils.data.DataLoader(
+    train_dataset, batch_size=4, shuffle=True
+)
+test_loader = torch.utils.data.DataLoader(
+    test_dataset, batch_size=4, shuffle=False
+)
 
 net = Net()
-net.load_state_dict(torch.load(PATH))
+net = net.cuda()
+optimiser = optim.SGD(net.parameters(), lr = 0.001, momentum = 0.9)
 
-outputs = net(images)
+for epoch in range(2):
+    print("Epoch: {}".format(epoch))
+    train_and_test(net, train_loader, optimiser)
 
-_, predicted = torch.max(outputs, 1)
-
-print('Predicted: ', ' '.join('%5s' % classes[predicted[j]]
-                              for j in range(4)))
-
-correct = 0
-total = 0
-with torch.no_grad():
-    for data in testloader:
-        images, labels = data
-        outputs = net(images)
-        _, predicted = torch.max(outputs.data, 1)
-        total += labels.size(0)
-        correct += (predicted == labels).sum().item()
-
-print('Accuracy of the network on the 10000 test images: %d %%' % (
-    100 * correct / total))
-
-class_correct = list(0. for i in range(10))
-class_total = list(0. for i in range(10))
-with torch.no_grad():
-    for data in testloader:
-        images, labels = data
-        outputs = net(images)
-        _, predicted = torch.max(outputs, 1)
-        c = (predicted == labels).squeeze()
-        for i in range(4):
-            label = labels[i]
-            class_correct[label] += c[i].item()
-            class_total[label] += 1
-
-
-for i in range(10):
-    print('Accuracy of %5s : %2d %%' % (
-        classes[i], 100 * class_correct[i] / class_total[i]))
+torch.save(net.state_dict(), "cifar_net.pth")
