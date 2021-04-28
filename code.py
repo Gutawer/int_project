@@ -89,6 +89,8 @@ def train_and_test(net, train_loader, test_loader, optimiser):
     percent_correct = running_correct * 100.0 / len(test_loader.dataset)
     print("Testing loss: {}, Accuracy: {}/10000 ({}%)".format(avg_loss, running_correct, percent_correct))
 
+    return percent_correct
+
 train_dataset, test_dataset = get_cifar10()
 
 train_loader = torch.utils.data.DataLoader(
@@ -102,8 +104,11 @@ net = Net()
 net = net.cuda()
 optimiser = optim.SGD(net.parameters(), lr = 0.001, momentum = 0.9)
 
+best = 0.0
 for epoch in range(2):
     print("Epoch: {}".format(epoch))
-    train_and_test(net, train_loader, test_loader, optimiser)
+    p = train_and_test(net, train_loader, test_loader, optimiser)
+    if p > best:
+        torch.save(net.state_dict(), "cifar_net.pth")
 
 torch.save(net.state_dict(), "cifar_net.pth")
