@@ -48,12 +48,12 @@ def get_cifar10():
 
     return train_dataset, test_dataset
 
-def train_and_test(net, loader, optimiser):
+def train_and_test(net, train_loader, test_loader, optimiser):
     net.train()
 
     running_loss = []
 
-    for inputs, labels in tqdm(loader):
+    for inputs, labels in tqdm(train_loader):
         inputs = inputs.cuda()
         labels = labels.cuda()
 
@@ -74,7 +74,7 @@ def train_and_test(net, loader, optimiser):
     running_loss = 0.0
     running_correct = 0
 
-    for inputs, labels in loader:
+    for inputs, labels in test_loader:
         with torch.no_grad():
             inputs = inputs.cuda()
             labels = labels.cuda()
@@ -85,8 +85,8 @@ def train_and_test(net, loader, optimiser):
             outputs = outputs.max(1)[1]
             running_correct += outputs.eq(labels.view_as(outputs)).sum().item()
 
-    avg_loss = running_loss / len(loader.dataset)
-    percent_correct = running_correct * 100.0 / len(loader.dataset)
+    avg_loss = running_loss / len(test_loader.dataset)
+    percent_correct = running_correct * 100.0 / len(test_loader.dataset)
     print("Testing loss: {}, Accuracy: {}/10000 ({}%)".format(avg_loss, running_correct, percent_correct))
 
 train_dataset, test_dataset = get_cifar10()
@@ -104,6 +104,6 @@ optimiser = optim.SGD(net.parameters(), lr = 0.001, momentum = 0.9)
 
 for epoch in range(2):
     print("Epoch: {}".format(epoch))
-    train_and_test(net, train_loader, optimiser)
+    train_and_test(net, train_loader, test_loader, optimiser)
 
 torch.save(net.state_dict(), "cifar_net.pth")
