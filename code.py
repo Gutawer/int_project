@@ -4,30 +4,68 @@ import torchvision.transforms as transforms
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from tqdm import tqdm
+import math
+import tqdm
 
 class Net(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(3, 6, 5)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 10)
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(True),
+            nn.MaxPool2d(2,2),
+            nn.Dropout(0.2),
+
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(True),
+            nn.MaxPool2d(2,2),
+            nn.Dropout(0.2),
+
+            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(True),
+            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(True),
+            nn.MaxPool2d(2,2),
+            nn.Dropout(0.2),
+
+            nn.Conv2d(256, 512, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(True),
+            nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(True),
+            nn.MaxPool2d(2,2),
+            nn.Dropout(0.2),
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(512 * 2 * 2, 4096),
+            nn.ReLU(True),
+            nn.Dropout(0.2),
+            nn.Linear(4096, 4096),
+            nn.ReLU(True),
+            nn.Dropout(0.2),
+            nn.Linear(4096, 1000),
+            nn.ReLU(True),
+            nn.Dropout(0.5),
+            nn.Linear(1000, 10)
+        )
 
     def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = x.view(-1, 16 * 5 * 5)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
+        x = self.features(x)
+        x = self.classifier(x)
         return x
 
 def get_cifar10():
     train_transform = transforms.Compose(
         [
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ]
@@ -53,7 +91,7 @@ def train_and_test(net, train_loader, test_loader, optimiser):
 
     running_loss = []
 
-    for inputs, labels in tqdm(train_loader):
+    for inputs, labels in tqdm.tqdm(train_loader):
         inputs = inputs.cuda()
         labels = labels.cuda()
 
@@ -94,21 +132,25 @@ def train_and_test(net, train_loader, test_loader, optimiser):
 train_dataset, test_dataset = get_cifar10()
 
 train_loader = torch.utils.data.DataLoader(
-    train_dataset, batch_size=4, shuffle=True
+    train_dataset, batch_size=128, shuffle=True
 )
 test_loader = torch.utils.data.DataLoader(
-    test_dataset, batch_size=4, shuffle=False
+    test_dataset, batch_size=128, shuffle=False
 )
 
 net = Net()
 net = net.cuda()
-optimiser = optim.SGD(net.parameters(), lr = 0.001, momentum = 0.9)
+optimiser = optim.SGD(net.parameters(), lr = 0.05, momentum = 0.9, weight_decay=5e-4)
+scheduler = optim.lr_scheduler.StepLR(optimiser, step_size = 30, gamma = 0.1)
 
 best = 0.0
-for epoch in range(2):
-    print("Epoch: {}".format(epoch))
+for epoch in range(200):
+    print("Epoch: {}, LR: {}".format(epoch, optimiser.param_groups[0]['lr']))
     p = train_and_test(net, train_loader, test_loader, optimiser)
     if p > best:
         torch.save(net.state_dict(), "cifar_net.pth")
+        best = p
+    print("(Best: {}%)".format(best))
+    scheduler.step()
 
 torch.save(net.state_dict(), "cifar_net.pth")
